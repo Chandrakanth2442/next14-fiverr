@@ -84,7 +84,7 @@ const Navbar = () => {
                                                 <ListItem
                                                     key={subIndex}
                                                     title={subcategory.name}
-                                                    subcategory={subcategory}
+                                                    subCategory={subcategory}
                                                 />
                                             ))}
                                         </div>

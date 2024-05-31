@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 
 
 
@@ -47,5 +47,15 @@ export const remove=mutation({
 
         await ctx.db.delete(media._id);
         await ctx.storage.delete(args.storageId)
+    }
+})
+
+export const getMediaUrl=query({
+    args:{
+        storageId: v.optional(v.id("_storage"))
+    },
+    handler: async(ctx, args)=>{
+        if(!args.storageId) return null;
+        return await ctx.storage.getUrl(args.storageId);
     }
 })

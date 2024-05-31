@@ -1,155 +1,156 @@
+import { v } from "convex/values";
 
-import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
-import { Id } from './_generated/dataModel';
-import defaultSchema from './schema';
+import { internalMutation, mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 
-//Mutation does add new rows, delete rows etc
-export const create=mutation({
-    args:{
+// internal mutations - https://github.com/get-convex/convex-stripe-demo/blob/main/convex/payments.ts
+
+export const create = mutation({
+    args: {
         title: v.string(),
         description: v.string(),
         subcategoryId: v.string(),
     },
-    handler: async(ctx, args)=>{
+    handler: async (ctx, args) => {
         const identity = await ctx.auth.getUserIdentity();
 
         if (!identity) {
             throw new Error("Unauthorized");
         }
-        const user = await ctx.db.query("users").withIndex("by_token" as never, (q)=>q.eq("tokenIdentifier" as never, identity.tokenIdentifier as never)).unique();
 
-        if(user===null)
-            return ;
+        const user = await ctx.db
+            .query("users")
+            .withIndex("by_token", (q) =>
+                q.eq("tokenIdentifier", identity.tokenIdentifier)
+            )
+            .unique();
 
-        const gigId=await ctx.db.insert("gigs",{
+        if (user === null) {
+            return;
+        }
+
+        const gigId = await ctx.db.insert("gigs", {
             title: args.title,
             description: args.description,
             subcategoryId: args.subcategoryId as Id<"subcategories">,
             sellerId: user._id!,
             published: false,
-            clicks: 0
+            clicks: 0,
         })
-       return gigId;
-    }
+
+        return gigId;
+    },
 });
 
 
-export const get=query({
-    args:{
-        id: v.id("gigs")
-    },
-    handler: async(ctx, args)=>{
-        const gig=await ctx.db.get(args.id);
-        if(gig==null){
-            throw new Error("Gig not found")
+export const get = query({
+    args: { id: v.id("gigs") },
+    handler: async (ctx, args) => {
+        const gig = await ctx.db.get(args.id);
+        if (gig === null) {
+            throw new Error("Gig not found");
         }
-        const seller=await ctx.db.get(gig.sellerId as Id<"users">)
-        if(!seller){
+        const seller = await ctx.db.get(gig.sellerId as Id<"users">);
+
+        if (!seller) {
             throw new Error("Seller not found");
         }
-        const country=await ctx.db.query("countries")
-                        .withIndex("by_userId", (q)=>q.eq("userId", seller._id))
-                        .unique();
-        if (country===null){
-            throw new Error("Country not found")
+
+        const country = await ctx.db.query("countries")
+            .withIndex("by_userId", (q) => q.eq("userId", seller._id))
+            .unique();
+
+        if (country === null) {
+            throw new Error("Country not found");
         }
 
-        //get languages
-        const languages=await ctx.db.query("languages")
-        .withIndex("by_userId", (q)=>q.eq("userId", seller._id))
-        .collect();
+        // get languages
+        const languages = await ctx.db.query("languages")
+            .withIndex("by_userId", (q) => q.eq("userId", seller._id))
+            .collect();
 
-        const sellerWithCountryAndLanguage={
+        const sellerWithCountryAndLanguages = {
             ...seller,
             country: country,
-            languages: languages
+            languages: languages,
+        };
 
-        }
-
-        const gigWithSeller={
+        const gigWithSeller = {
             ...gig,
-            seller: sellerWithCountryAndLanguage
-        }
+            seller: sellerWithCountryAndLanguages
+        };
 
-        //get last fulfilment
-        const lastFulfilment=await ctx.db.query("orders")
-        .withIndex("by_gigId", (q)=>q.eq("gigId", gig._id))
-        .order("desc")
-        .first();
+        // get last fulfilment
+        const lastFulfilment = await ctx.db.query("orders")
+            .withIndex("by_gigId", (q) => q.eq("gigId", gig._id))
+            .order("desc")
+            .first();
 
-        const gigWithSellerAndLastFulfilment={
+
+        const gigWithSellerAndLastFulfilment = {
             ...gigWithSeller,
-            lastFulfilment: lastFulfilment
-        }
+            lastFulfilment: lastFulfilment,
+        };
 
-        //get images
-        const images=await ctx.db.query("gigMedia")
-        .withIndex("by_gigId", (q)=>q.eq("gigId", gig._id))
-        .collect();
 
-        const imagesWithUrls= await Promise.all(images.map(async(image)=>{
-                const imageUrl=ctx.storage.getUrl(image.storageId);
-                if(!imageUrl){
-                    throw new Error("Image not found");
-                }
-                return{
-                    ...image,
-                    url: imageUrl
-                }
+        // get images
+        const images = await ctx.db.query("gigMedia")
+            .withIndex("by_gigId", (q) => q.eq("gigId", gig._id))
+            .collect();
+
+        const imagesWithUrls = await Promise.all(images.map(async (image) => {
+            const imageUrl = await ctx.storage.getUrl(image.storageId);
+            if (!imageUrl) {
+                throw new Error("Image not found");
+            }
+            return { ...image, url: imageUrl };
         }));
 
-        const gigWithSellerAndLastFulfilmentAndImages={
+        const gigWithSellerAndLastFulfilmentAndImages = {
             ...gigWithSellerAndLastFulfilment,
-            imagesWithUrls: imagesWithUrls
-        }
+            images: imagesWithUrls,
+        };
 
         return gigWithSellerAndLastFulfilmentAndImages;
-    }
+    },
 });
 
-export const isPublished=query({
-    args:{
-        id: v.id("gigs")
-    },
-    
-    handler: async(ctx, args)=>{
-        const gig=ctx.db.get(args.id);
+
+export const isPublished = query({
+    args: { id: v.id("gigs") },
+    handler: async (ctx, args) => {
+        const gig = await ctx.db.get(args.id);
         return gig?.published || false;
     }
 });
 
-
-export const publish=mutation({
-    args:{
-        id: v.id("gigs")
-    }, 
-    handler: async(ctx, args)=>{
-        const gig=ctx.db.get(args.id);
-        if(!gig){
-            throw new Error("Gig not found")
+export const publish = mutation({
+    args: { id: v.id("gigs") },
+    handler: async (ctx, args) => {
+        const gig = await ctx.db.get(args.id);
+        if (!gig) {
+            throw new Error("Gig not found");
         }
 
-        const media=await ctx.db.query("gigMedia")
-        .withIndex("by_gigId", (q)=>q.eq("gigId", gig._id))
-        .collect();
+        const media = await ctx.db.query("gigMedia")
+            .withIndex("by_gigId", (q) => q.eq("gigId", gig._id))
+            .collect();
 
-        const offers=await ctx.db.query("offers")
-        .withIndex("by_gigId", (q)=>q.eq("gigId", gig._id))
-        .collect();
+        const offers = await ctx.db.query("offers")
+            .withIndex("by_gigId", (q) => q.eq("gigId", gig._id))
+            .collect();
 
-        if(media.length===0 || gig.description==="" || offers.length!===3){
-            throw new Error("Gig needs at least one image to published")
+        if (media.length === 0 || gig.description === "" || offers.length !== 3) {
+            throw new Error("Gig needs at least one image to be published");
         }
 
-        await ctx.db.patch(args.id,{
+        await ctx.db.patch(args.id, {
             published: true,
-
         });
-        return gig;
-    }
-});
 
+        return gig;
+    },
+});
 
 export const unpublish = mutation({
     args: { id: v.id("gigs") },
@@ -399,4 +400,3 @@ export const getCategoryAndSubcategory = query({
         };
     }
 });
-
